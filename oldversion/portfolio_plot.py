@@ -1,0 +1,13 @@
+import pandas as pd
+s1 = pd.read_excel(r'D:\CTATrade\brandy.xlsx',index_col=0)
+s2 = pd.read_excel(r'D:\CTATrade\wh2.xlsx',index_col=0)
+s3 = pd.read_excel(r'D:\CTATrade\wh3.xlsx',index_col=0)
+s4 = pd.read_excel(r'D:\CTATrade\tequila.xlsx',index_col=0)
+s5 = pd.read_excel(r'D:\CTATrade\tequila2.xlsx',index_col=0)
+s=pd.concat([s1,s2,s3],axis=1,join='outer')
+s=pd.concat([s4,s5],axis=1,join='outer')
+return_df = s.apply(lambda x:x.sum(),axis=1).cumsum().plot(figsize=(12,7),grid=True)
+s.corr()
+s4.apply(lambda x:x.sum(),axis=1).cumsum().plot(figsize=(12,7),grid=True)
+s5.apply(lambda x:x.sum(),axis=1).cumsum().plot(figsize=(12,7),grid=True)
+s.corr()
