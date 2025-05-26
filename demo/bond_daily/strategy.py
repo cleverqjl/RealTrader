@@ -8,19 +8,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.font_manager as fm
-# import talib as tb
+from utils.backtest import cal_atr
 
 # 设置中文字体
-try:
-    plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
-    plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
-except:
-    print("警告: 无法设置中文字体，图表中的中文可能无法正确显示")
-
+plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
+plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
+ 
 # Load and prepare data
 df = pd.read_parquet(r'Data/T9999.parquet')
-print(df.columns)
-print(df)
+# print(df.columns)
+# print(df)
 data_1d = df[df['freq']=='1d'].copy()  # Create an explicit copy
 data_1m = df[df['freq']=='1m'].copy()
 
@@ -33,23 +30,31 @@ data_1d['return'] = data_1d['close'].pct_change() * 100  # 转换为百分比
 data_1d['return_settle'] = data_1d['settle_price']/data_1d['settle_price'].shift(1)-1
 
 # Calculate Bollinger Bands for daily data
-middle, upper, lower = calculate_bollinger_bands(data_1d,20,0.5)
+middle, upper, lower = calculate_bollinger_bands(data_1d,10,0.5)
 
 # Add Bollinger Bands to the DataFrame
 data_1d['bb_middle'] = middle
 data_1d['bb_upper'] = upper
 data_1d['bb_lower'] = lower
 
+# 计算atr
+# data_1d['atr'] = cal_atr(data_1d,10)
+# 计算ema
+data_1d['ema5'] = data_1d['close'].ewm(span=5,adjust=False).mean()
+data_1d['ema10'] = data_1d['close'].ewm(span=10,adjust=False).mean()
+# print(data_1d[['datetime','close','atr','ema']].head(50))
+# exit()
+
 # 实现量化交易策略
 # 创建T-2日收益率的移位列
-data_1d['return_lag2'] = data_1d['return_settle'].shift(2)
+data_1d['return_lag2'] = data_1d['return_settle'].shift(1)
 
 # 创建信号列
 data_1d['signal'] = pd.NA  # 0表示不操作
 
 # 做空信号：T-2日收益率大于0.3%，且close<bb_lower
 short_condition1 = (data_1d['return_lag2'] > 0.0003) &  (data_1d['return_lag2'] < 0.005)
-short_condition2 = data_1d['close'].shift(1)<data_1d['bb_lower'].shift(1)
+short_condition2 = data_1d['close']<data_1d['ema5']
 short_condition = short_condition1 & short_condition2
 data_1d.loc[short_condition, 'signal'] = -1  # -1表示做空
 
@@ -63,12 +68,12 @@ is_wednesday = data_1d['date'].dt.weekday == 2  # 2表示周三
 long_condition1 = (data_1d['return_lag2'] < -0.0003) &  (data_1d['return_lag2'] > -0.005)
 # 做多信号2：当天是周三，下一日开盘做多
 long_condition2 = is_wednesday.shift(-1).fillna(False)  # 下一日是周三（即当天是周二）
-long_condition3 = data_1d['close'].shift(1)>data_1d['bb_upper'].shift(1)
+long_condition3 = data_1d['close']>data_1d['ema5']
 
 # 合并做多条件
-long_condition = (long_condition1 & long_condition3) | long_condition2
-data_1d.loc[long_condition, 'signal'] = 1  # 1表示做多
-data_1d.loc[~(long_condition|short_condition), 'signal'] = 0
+long_condition = (long_condition1 & long_condition3) #| long_condition2
+data_1d.loc[long_condition1, 'signal'] = 1  # 1表示做多
+data_1d.loc[~(long_condition1|short_condition), 'signal'] = 0
 
 
 
@@ -77,60 +82,35 @@ df2 = pd.read_parquet(r'Data\backtest.parquet')
 
 df1 = data_1d.set_index('datetime')
 df2 = df2.set_index('time')
-print(df1.head(50))
-print(df2)
+# print(df1.head(50))
+# print(df2)
 df_merge = pd.concat([df1['signal'],df2['size']],axis=1,join='outer')
-print(df_merge.head(50))
+# print(df_merge.head(50))
 # exit()
 
 # 创建持仓列（使用cumsum和ffill实现持仓保持）
-data_1d['pos'] = data_1d['signal'].shift(0)  # T+1日开盘价执行
+data_1d['pos'] = data_1d['signal'].shift(1)  # T+1日开盘价执行
+data_1d['pos'] = data_1d['pos'].replace(0, pd.NA)  # 将0替换为NA以便后续填充
+data_1d['pos'] = data_1d['pos'].ffill().fillna(0)
 # data_1d['pos'] = (df_merge['size']/10000).to_list()
 # data_1d['pos'] = data_1d['pos'].replace(0, pd.NA)  # 将0替换为NA以便后续填充
 # data_1d['pos'] = data_1d['pos'].ffill().fillna(0)  # 向前填充，保持上一日仓位
-print(data_1d.head(50))
+# print(data_1d[['datetime','return_lag2','signal','pos']].head(50))
 # exit()
 
 # 仓位--->盈亏
-# -计算下一根k线开盘价（计算平仓价格用）
-data_1d['next_open'] = data_1d['open'].shift(-1)  # 下根K线的开盘价
-data_1d['next_open'].fillna(value=data_1d['close'], inplace=True)
-# -找出开仓的k线
-condition1 = data_1d['pos'] != 0  # 当前周期不为空仓
-condition2 = data_1d['pos'] != data_1d['pos'].shift(1)  # 当前周期和上个周期持仓方向不一样。
-open_pos_condition = condition1 & condition2
-# -找出平仓的k线
-condition1 = data_1d['pos'] != 0  # 当前周期不为空仓
-condition2 = data_1d['pos'] != data_1d['pos'].shift(-1).fillna(method='ffill')  # 当前周期和下个周期持仓方向不一样。
-close_pos_condition = condition1 & condition2    
-# -滑点
-minpoint = 0
-slippageMulti = 0
-slippage = minpoint * slippageMulti
-# -开仓价格：理论开盘价加上相应滑点
-data_1d.loc[open_pos_condition, 'open_pos_price'] = data_1d['open'] + slippage*data_1d['pos']
-# -平仓价格
-data_1d.loc[close_pos_condition, 'close_pos_price'] = data_1d['next_open'] - slippage*data_1d['pos']
-# -固定手数计算
-data_1d.loc[open_pos_condition, 'contract_num'] = 1
-data_1d['contract_num'].fillna(method='ffill',inplace=True)
-data_1d.loc[data_1d['pos'] == 0, ['contract_num']] = 0
-data_1d['contract_num'].fillna(0,inplace=True)
-# -盈利计算(加上滑点耗损)
-contractMulti = 1000000
-data_1d['profit']=data_1d['contract_num']*(data_1d['close']-data_1d['close'].shift(1))*data_1d['pos']*contractMulti
-data_1d.loc[open_pos_condition, 'profit']=data_1d['contract_num']*(data_1d['close']-data_1d['open_pos_price'])*data_1d['pos']*contractMulti
-data_1d.loc[close_pos_condition, 'profit']=data_1d['contract_num']*(data_1d['close_pos_price']-data_1d['close'].shift(1))*data_1d['pos']*contractMulti
-# -手续费计算
-c_rate = 0
-data_1d.loc[open_pos_condition, 'fee'] = data_1d[open_pos_condition]['contract_num']*data_1d[open_pos_condition]['open_pos_price']*c_rate*contractMulti
-data_1d.loc[close_pos_condition, 'fee'] = data_1d[close_pos_condition]['contract_num']*data_1d[close_pos_condition]['close_pos_price']*c_rate*contractMulti
-data_1d['fee'].fillna(0,inplace=True)
-# -净盈利计算
-data_1d['net_profit']=data_1d['profit']-data_1d['fee']
-# -累计盈亏计算
-data_1d['profit_cum']=data_1d['net_profit'].cumsum()
+from utils.backtest import contract_num_to_profit,pos_to_contract_num
+data_1d['trading_date'] = data_1d['datetime'].dt.strftime('%Y-%m-%d')
+data_1d.rename(columns={'datetime':'candle_begin_time'},inplace=True)
+data_1d = pos_to_contract_num(data_1d,minpoint=0.005,slippageMulti=1,capitalmode='atr_day',capital_unit=1000000,contractMulti=1000000,limitValue=None)
+print(data_1d[['candle_begin_time','pos','close','open','trade_price','contract_num']])
+data_1d = contract_num_to_profit(data_1d,contractMulti=1000000,cost=3,cost_type='amount',minpoint=0.005,slippageMulti=0)
+
+print(data_1d[['candle_begin_time','pos','close','open','trade_price','contract_num','contract_num_hold','contract_num_trade','fee','profit','profit_cum']].tail(50))
+# exit()
 print(data_1d['profit_cum'])
+
+
 # exit()
 
 # 盈亏--->净值
@@ -150,7 +130,7 @@ print(data_1d['profit_cum'])
 # -绘制净值曲线
 plt.figure(figsize=(12, 6))
 # -将datetime转换为日期格式
-data_1d['date'] = pd.to_datetime(data_1d['datetime'])
+data_1d['date'] = pd.to_datetime(data_1d['candle_begin_time'])
 # -计算净值曲线（初始资金为1）
 # data_1d['profit_cum'] = (1 + data_1d['cumulative_strategy_return'])
 # data_1d['benchmark_equity'] = (1 + data_1d['cumulative_return'])
