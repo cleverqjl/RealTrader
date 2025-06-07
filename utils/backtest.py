@@ -16,6 +16,12 @@ def pos_to_contract_num(data_df:pd.DataFrame,minpoint:float,slippageMulti:float,
             最小价格变动单位（如最小跳动点）。
         slippageMulti: float
             滑点倍数，实际滑点= minpoint * slippageMulti。
+        capitalmode: str
+            资金管理模式，可选值为：'atr_minute','atr_day','contractnum','marketValue'。
+        capital_unit: float
+        contractMulti: float
+            合约乘数，用于将价格变动转换为实际盈亏金额。
+        limitValue: float
 
     返回值：
         函数直接在data_1d内增加以下字段：

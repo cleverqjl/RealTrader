@@ -27,7 +27,6 @@ data_1d = data_1d[data_1d['datetime']<'2026-01-01']
 
 # 计算收益率
 data_1d['return'] = data_1d['close'].pct_change() * 100  # 转换为百分比
-print(data_1d.columns)
 data_1d['return_settle'] = data_1d['settle_price']/data_1d['settle_price'].shift(1)-1
 
 # Calculate Bollinger Bands for daily data
@@ -57,7 +56,7 @@ data_1d['signal'] = pd.NA  # 0表示不操作
 short_condition1 = (data_1d['return_lag2'] > 0.0003) &  (data_1d['return_lag2'] < 0.005)
 short_condition2 = data_1d['close']<data_1d['ema5']
 short_condition = short_condition1 & short_condition2
-data_1d.loc[short_condition1, 'signal'] = -1  # -1表示做空
+data_1d.loc[short_condition, 'signal'] = -1  # -1表示做空
 
 # 将datetime转换为日期类型（如果尚未转换）
 data_1d['date'] = pd.to_datetime(data_1d['datetime'])
@@ -77,6 +76,18 @@ data_1d.loc[long_condition1, 'signal'] = 1  # 1表示做多
 data_1d.loc[~(long_condition1|short_condition), 'signal'] = 0
 
 
+
+# -对齐
+df2 = pd.read_parquet(r'Data\backtest.parquet')
+
+df1 = data_1d.set_index('datetime')
+df2 = df2.set_index('time')
+# print(df1.head(50))
+# print(df2)
+df_merge = pd.concat([df1['signal'],df2['size']],axis=1,join='outer')
+# print(df_merge.head(50))
+# exit()
+
 # 创建持仓列（使用cumsum和ffill实现持仓保持）
 data_1d['pos'] = data_1d['signal'].shift(1)  # T+1日开盘价执行
 data_1d['pos'] = data_1d['pos'].replace(0, pd.NA)  # 将0替换为NA以便后续填充
@@ -86,20 +97,6 @@ data_1d['pos'] = data_1d['pos'].ffill().fillna(0)
 # data_1d['pos'] = data_1d['pos'].ffill().fillna(0)  # 向前填充，保持上一日仓位
 # print(data_1d[['datetime','return_lag2','signal','pos']].head(50))
 # exit()
-
-# -对齐
-df2 = pd.read_parquet(r'Data\backtest.parquet')
-df1 = data_1d.set_index('datetime')
-df2 = df2.set_index('time')
-# print(df1.head(50))
-# print(df2)
-df_merge = pd.concat([df1[['return_settle','return_lag2','signal','pos']],df2['size']],axis=1,join='outer')
-df_merge.to_csv('df_merge.csv',index=True)
-# print(df_merge.tail(1000))
-# print(df_merge.head(50))
-# exit()
-
-
 
 # 仓位--->盈亏
 from utils.backtest import contract_num_to_profit,pos_to_contract_num
